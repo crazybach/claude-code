@@ -145,3 +145,66 @@ Think of memory as three cooperating layers:
 3. **Recall layer**: lightweight scan + model ranker + bounded attachment injection with freshness guardrails.
 
 This design keeps memory persistent and useful while minimizing stale or over-broad recall.
+
+---
+
+## 11) Is there a local DB / index?
+
+Short answer: **no dedicated local database/vector index** for memory retrieval in this path.
+
+What exists locally:
+
+- memory persisted as Markdown files on disk,
+- light frontmatter/header scan (`scanMemoryFiles`) over `.md` files,
+- in-memory dedup/state guards (`alreadySurfaced`, `readFileState`) during a turn.
+
+What is LLM-driven:
+
+- selecting which scanned memories are relevant (`selectRelevantMemories`) is delegated to a side model call with a strict JSON schema output.
+
+So the architecture is: **file system + lightweight local scan + model-based rank/select**, not “send every memory file to the main model each turn.”
+
+---
+
+## 12) Concrete, code-based processing example
+
+Assume:
+
+- user prompt: “Why did we stop mocking DB in tests?”
+- memory directory has:
+  - `feedback_testing.md` (description: “integration tests must hit real DB”),
+  - `reference_dashboards.md`,
+  - `project_release_freeze.md`.
+
+### Step-by-step
+
+1. **System prompt includes memory policy/instructions**
+   - Memory section is assembled via `loadMemoryPrompt()` and inserted as `systemPromptSection('memory', ...)`.
+
+2. **At turn start, memory prefetch begins in parallel**
+   - `queryLoop()` starts `startRelevantMemoryPrefetch(...)` once per turn.
+
+3. **Local scan of candidate files**
+   - `findRelevantMemories(...)` calls `scanMemoryFiles(...)`.
+   - It recursively lists `.md` files, excludes `MEMORY.md`, reads only header/frontmatter slices, and builds a manifest.
+
+4. **LLM side-query selects up to 5 likely files**
+   - `selectRelevantMemories(...)` sends `Query + manifest` to a side Sonnet call.
+   - Output must match JSON schema `{ selected_memories: string[] }`.
+
+5. **Selected files are read with hard limits**
+   - `readMemoriesForSurfacing(...)` loads chosen files with line/byte truncation rules.
+   - If truncated, Claude gets a note pointing to FileReadTool for full content.
+
+6. **Attachment injection (non-blocking)**
+   - On collection point, if prefetch is already settled, `query.ts` injects `relevant_memories` attachments.
+   - If not settled yet, it skips without waiting and may consume next iteration.
+
+7. **Main model sees only selected memory snippets, not the whole corpus**
+   - In this example, likely `feedback_testing.md` is attached;
+   - unrelated memory files remain unsent for this turn.
+
+8. **Freshness warning guards stale claims**
+   - If selected memory is old, header includes staleness warning text to verify against current code.
+
+This gives a practical behavior: memory retrieval is selective and bounded, with local file scanning plus model ranking, rather than brute-force full-memory context stuffing.
