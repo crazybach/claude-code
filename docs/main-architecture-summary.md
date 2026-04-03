@@ -63,8 +63,3 @@ A useful simplified model is:
 ## 9) Notes on this repository
 
 The docs in this repo describe it as a **reference / exploration codebase** with architecture guides intended to map important systems quickly.
-
-
-## 10) Memory deep dive
-
-For a subsystem-level walkthrough of memory enablement, storage layout, extraction, retrieval, and team sync, see [Memory System Deep Dive](memory-system-deep-dive.md).
